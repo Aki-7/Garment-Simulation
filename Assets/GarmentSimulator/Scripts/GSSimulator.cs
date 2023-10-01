@@ -24,7 +24,8 @@ class GSSimulator : MonoBehaviour {
     public Vector3 _gravity = new Vector3(0F, -9.81F, 0F);
     public float _collisionRadius = 0.01F;
     public float _velocityClamp = 10F;
-    public int _iterationCount = 2;
+    public int _subSteps = 3;
+    public int _iterationCount = 20;
 
     void Awake() {
         Debug.Assert(_garment);
@@ -50,8 +51,8 @@ class GSSimulator : MonoBehaviour {
 
         UpdateSimulationProperties();
 
-        float dt = Time.deltaTime / _iterationCount;
-        for (int i = 0; i < _iterationCount; i ++){
+        float dt = Time.deltaTime / _subSteps;
+        for (int i = 0; i < _subSteps; i ++){
             IterateSimulation(dt);
         }
     }
@@ -74,7 +75,7 @@ class GSSimulator : MonoBehaviour {
         GSSolver.Dispatch1D(_computeShader, GSSolver.dumpVelocities_Kernel, _garment.vertexCount);
         GSSolver.Dispatch1D(_computeShader, GSSolver.computeNextPositions_Kernel, _garment.vertexCount);
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < _iterationCount; i++) {
             GSSolver.Dispatch1D(_computeShader, GSSolver.accumulateDistanceConstraint_Kernel, _garment.edgeCount);
             GSSolver.Dispatch1D(_computeShader, GSSolver.projectAccumulatedConstraint_Kernel, _garment.vertexCount);
 

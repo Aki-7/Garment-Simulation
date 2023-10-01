@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -17,7 +18,7 @@ public class GSGarment : MonoBehaviour {
     private float[]             _blendShapeWeights = null;
     private string[]            _blendShapeNames = null;
     private bool                _ready = false;
-    private bool                _resettingPosition = false;
+    private DateTime            _resetPositionRequestTime = DateTime.Now;
 
     public int      vertexCount         {get{ return _vertexCount;}}
     public int      edgeCount           {get{ return _edgeCount;}}
@@ -111,18 +112,18 @@ public class GSGarment : MonoBehaviour {
 
     public void RequestResetPosition() {
         if (!_ready) return;
-        _resettingPosition = true;
+        _resetPositionRequestTime = DateTime.Now;
         _skin.enabled = true;
     }
 
     private void ResetPositionIfNeeded() {
         if (!_ready) return;
-        if (!_resettingPosition) return;
+        if (!_skin.enabled) return;
+        if (DateTime.Now - _resetPositionRequestTime < TimeSpan.FromMilliseconds(500)) return;
 
         var skinnedMesh = _skin.GetVertexBuffer();
         if (skinnedMesh == null) return;
 
-        _resettingPosition = false;
         _skin.enabled = false;
 
         var rootBone = _skin.rootBone.transform;
