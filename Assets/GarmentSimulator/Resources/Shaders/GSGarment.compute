@@ -1,0 +1,120 @@
+#include "GSBase.cginc"
+
+#pragma kernel CalculateRestShape
+
+[numthreads(THREAD_COUNT,1,1)]
+void CalculateRestShape(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	_restShapeVertexBuffer[id.x].position = _blendShapeBaseBuffer[id.x].position;
+	_restShapeVertexBuffer[id.x].normal = _blendShapeBaseBuffer[id.x].normal;
+	_restShapeVertexBuffer[id.x].tangent = _blendShapeBaseBuffer[id.x].tangent;
+	_restShapeVertexBuffer[id.x].velocity = float3(0, 0, 0);
+
+	for (uint i = 0u; i < _blendShapeCount; i++) {
+		float weight = _blendShapeWeightBuffer[i] / 100.0F;
+
+		BlendShapeVertex delta = _blendShapeDeltaBuffer[id.x * _blendShapeCount + i];
+
+		_restShapeVertexBuffer[id.x].position += delta.position * weight;
+		_restShapeVertexBuffer[id.x].normal += delta.normal * weight;
+		_restShapeVertexBuffer[id.x].tangent += delta.tangent * weight;
+	}
+}
+
+#pragma kernel CalculateRestEdge
+
+[numthreads(THREAD_COUNT,1,1)]
+void CalculateRestEdge(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _edgeCount) return;
+
+	int startIndex = _restShapeEdgeBuffer[id.x].startIndex;
+	int endIndex = _restShapeEdgeBuffer[id.x].endIndex;
+	float3 start = _restShapeVertexBuffer[startIndex].position;
+	float3 end = _restShapeVertexBuffer[endIndex].position;
+	_restShapeEdgeBuffer[id.x].length = distance(start, end);
+}
+
+#pragma kernel CalculateMinMaxPass1
+
+[numthreads(THREAD_COUNT,1,1)]
+void CalculateMinMaxPass1 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= 3) return;
+
+	_minMaxPositionBuffer[0][id.x] = FLT_MAX;
+	_minMaxPositionBuffer[1][id.x] = -FLT_MAX;
+}
+
+#pragma kernel CalculateMinMaxPass2
+
+void UpdateMaxPosition (float value, int axis)
+{
+	uint iCurrent = _minMaxPositionUint3Buffer[1][axis];
+	float current = asfloat(iCurrent);
+
+	[allow_uav_condition]
+	while(true)
+	{
+		uint tmp = iCurrent;
+
+		if (current < value)
+			InterlockedCompareExchange(_minMaxPositionUint3Buffer[1][axis], iCurrent, asuint(value), tmp);
+	
+		if (tmp == iCurrent) break;
+
+		iCurrent = tmp;
+		current = asfloat(iCurrent);
+	}
+}
+
+void UpdateMinPosition (float value, int axis)
+{
+	uint iCurrent = _minMaxPositionUint3Buffer[0][axis];
+	float current = asfloat(iCurrent);
+
+	[allow_uav_condition]
+	while(true)
+	{
+		uint tmp = iCurrent;
+
+		if (current > value)
+			InterlockedCompareExchange(_minMaxPositionUint3Buffer[0][axis], iCurrent, asuint(value), tmp);
+	
+		if (tmp == iCurrent) break;
+
+		iCurrent = tmp;
+		current = asfloat(iCurrent);
+	}
+}
+
+[numthreads(THREAD_COUNT,1,1)]
+void CalculateMinMaxPass2 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	float3 position = _nextPositionBuffer[id.x].position;
+
+	UpdateMinPosition(position.x, 0);
+	UpdateMinPosition(position.y, 1);
+	UpdateMinPosition(position.z, 2);
+
+	UpdateMaxPosition(position.x, 0);
+	UpdateMaxPosition(position.y, 1);
+	UpdateMaxPosition(position.z, 2);
+}
+
+#pragma kernel ForceSkinnedMesh
+
+[numthreads(THREAD_COUNT,1,1)]
+void ForceSkinnedMesh (uint3 id: SV_DispatchThreadID)
+{
+ 	if (id.x >= _vertexCount) return;
+
+	_vertexBuffer[id.x].position = mul(_skinnedTransformMatrix, float4(_skinnedVertexBuffer[id.x].position,    1)).xyz;
+	_vertexBuffer[id.x].normal 	 = mul(_skinnedRotationMatrix,  float4(_skinnedVertexBuffer[id.x].normal,      1)).xyz;
+	_vertexBuffer[id.x].tangent  = mul(_skinnedRotationMatrix,  float4(_skinnedVertexBuffer[id.x].tangent.xyz, 1)).xyz;
+	_vertexBuffer[id.x].velocity = float3(0, 0, 0);
+}

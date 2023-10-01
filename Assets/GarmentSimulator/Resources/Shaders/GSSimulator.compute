@@ -1,0 +1,307 @@
+#include "GSBase.cginc"
+
+#pragma kernel ApplyExternalForces
+
+[numthreads(THREAD_COUNT,1,1)]
+void ApplyExternalForces (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	_vertexBuffer[id.x].velocity += _gravity * _dt;;
+}
+
+#pragma kernel DumpVelocities
+
+[numthreads(THREAD_COUNT,1,1)]
+void DumpVelocities (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	float3 velocity = _vertexBuffer[id.x].velocity;
+	velocity += _epsilon;
+	velocity *= VELOCITY_DAMPING + _epsilon;
+	float velocityLength = min(length(velocity), _velocityClamp + _epsilon);
+
+	_vertexBuffer[id.x].velocity = normalize(velocity) * velocityLength;
+}
+
+#pragma kernel ComputeNextPositions
+
+[numthreads(THREAD_COUNT,1,1)]
+void ComputeNextPositions (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	_nextPositionBuffer[id.x].position = _vertexBuffer[id.x].position + _vertexBuffer[id.x].velocity * _dt;
+}
+
+#pragma kernel UpdatePositions
+
+[numthreads(THREAD_COUNT,1,1)]
+void UpdatePositions (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	_vertexBuffer[id.x].velocity = (_nextPositionBuffer[id.x].position - _vertexBuffer[id.x].position) / _dt;
+	_vertexBuffer[id.x].position = _nextPositionBuffer[id.x].position;
+}
+
+#pragma kernel AccumulateDistanceConstraint
+
+void AtomicDeltaUint3BufferAdd(int bufferIndex, int axis, float value)
+{
+	uint iValue = asuint(value);
+	uint tmp0 = 0;
+	uint tmp1;
+
+	[allow_uav_condition]
+	while (true) {
+		InterlockedCompareExchange(_deltaUint3Buffer[bufferIndex][axis], tmp0, iValue, tmp1);
+
+		if (tmp0 == tmp1) {
+			break;
+		}
+
+		tmp0 = tmp1;
+		iValue = asuint(value + asfloat(tmp1));
+	}
+}
+
+[numthreads(THREAD_COUNT,1,1)]
+void AccumulateDistanceConstraint(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _edgeCount) return;
+
+	Edge restShapeEdge = _restShapeEdgeBuffer[id.x];
+	int startIndex = restShapeEdge.startIndex;
+	int endIndex = restShapeEdge.endIndex;
+	float restLength = restShapeEdge.length;
+
+	InterlockedAdd(_deltaCountBuffer[startIndex], 1);
+	InterlockedAdd(_deltaCountBuffer[endIndex], 1);
+
+	float3 start = _nextPositionBuffer[startIndex].position;
+	float3 end = _nextPositionBuffer[endIndex].position;
+
+	float3 edgeVector = end - start;
+
+	float edgeLength = length(edgeVector);
+
+	if (edgeLength >= _epsilon) {
+		edgeVector = normalize(edgeVector);
+	}
+
+	float deltaLength = edgeLength - restLength;
+
+	float stiffness = deltaLength < 0 ? COMPRESSION_STIFFNESS : STRETCH_STIFFNESS;
+
+	float3 deltaPos = stiffness * deltaLength / 2 * edgeVector;
+
+	AtomicDeltaUint3BufferAdd(startIndex, 0, deltaPos.x);
+	AtomicDeltaUint3BufferAdd(startIndex, 1, deltaPos.y);
+	AtomicDeltaUint3BufferAdd(startIndex, 2, deltaPos.z);
+
+	AtomicDeltaUint3BufferAdd(endIndex, 0, -deltaPos.x);
+	AtomicDeltaUint3BufferAdd(endIndex, 1, -deltaPos.y);
+	AtomicDeltaUint3BufferAdd(endIndex, 2, -deltaPos.z);
+}
+
+#pragma kernel ProjectAccumulatedConstraint
+
+[numthreads(THREAD_COUNT,1,1)]
+void ProjectAccumulatedConstraint(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	float3 delta = float3(0, 0, 0);
+	int deltaCount = _deltaCountBuffer[id.x];
+
+	if (deltaCount > 0) {
+		delta.x = asfloat(_deltaUint3Buffer[id.x].x);
+	 	delta.y = asfloat(_deltaUint3Buffer[id.x].y);
+		delta.z = asfloat(_deltaUint3Buffer[id.x].z);
+		delta /= float(deltaCount);
+	}
+
+	// delta = lerp(delta, 0, saturate(exp((length(delta) - 1.5) * 4) * 8 - 0.016));
+
+	_nextPositionBuffer[id.x].position += delta;
+
+	_deltaUint3Buffer[id.x] = uint3(0, 0, 0);
+	_deltaCountBuffer[id.x] = 0;
+}
+
+#pragma kernel AnalyzeVoxelsPass1
+
+[numthreads(THREAD_COUNT,1,1)]
+void AnalyzeVoxelsPass1 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= _voxelCount3) return;
+
+	_voxelIdToActiveVoxelBuffer[id.x] = INITIALIZED;
+}
+
+#pragma kernel AnalyzeVoxelsPass2
+
+[numthreads(THREAD_COUNT,1,1)]
+void AnalyzeVoxelsPass2 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	float3 position = _nextPositionBuffer[id.x].position;
+	int voxelId = PositionToVoxelId(position);
+
+	_nextPositionBuffer[id.x].voxelId = voxelId;
+
+	int activeVoxelBufferIndex;
+
+	InterlockedCompareExchange(_voxelIdToActiveVoxelBuffer[voxelId], INITIALIZED, IN_USE, activeVoxelBufferIndex);
+
+	if (activeVoxelBufferIndex == INITIALIZED) {
+		InterlockedAdd(_activeVoxelCountBuffer[0], 1, activeVoxelBufferIndex);
+		_activeVoxelBuffer[activeVoxelBufferIndex].bodyTriangleCount = 0;
+		_activeVoxelBuffer[activeVoxelBufferIndex].id = voxelId;
+		_voxelIdToActiveVoxelBuffer[voxelId] = activeVoxelBufferIndex;
+	}
+}
+
+#pragma kernel AnalyzeBodyMeshPass1
+
+float3 TriangleToNormal(float3 a, float3 b, float3 c)
+{
+	return normalize(cross(b - a, c - a)); // left handed
+}
+
+[numthreads(THREAD_COUNT,1,1)]
+void AnalyzeBodyMeshPass1 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= _bodyTriangleCount) return;
+
+	int index0 = _bodyMeshIndexBuffer[id.x * 3];
+	int index1 = _bodyMeshIndexBuffer[id.x * 3 + 1];
+	int index2 = _bodyMeshIndexBuffer[id.x * 3 + 2];
+
+	float3 pos0 = _skinnedBodyVertexBuffer[index0].position;
+	pos0 = mul(_bodyTransformMatrix, float4(pos0, 1.F)).xyz;
+
+	float3 pos1 = _skinnedBodyVertexBuffer[index1].position;
+	pos1 = mul(_bodyTransformMatrix, float4(pos1, 1.F)).xyz;
+
+	float3 pos2 = _skinnedBodyVertexBuffer[index2].position;
+	pos2 = mul(_bodyTransformMatrix, float4(pos2, 1.F)).xyz;
+
+	float3 minPosition = min(pos0, min(pos1, pos2)) - float3(_collisionRadius, _collisionRadius, _collisionRadius);
+	float3 maxPosition = max(pos0, max(pos1, pos2)) + float3(_collisionRadius, _collisionRadius, _collisionRadius);
+
+	int3 minVoxel = PositionToVoxel(minPosition);
+	int3 maxVoxel = PositionToVoxel(maxPosition);
+	minVoxel = max(minVoxel, int3(0, 0, 0));
+	maxVoxel = min(maxVoxel, int3(_voxelCount-1,_voxelCount-1,_voxelCount-1));
+
+	for (int x = minVoxel.x; x <= maxVoxel.x; x++) {
+		for (int y = minVoxel.y; y <= maxVoxel.y; y++) {
+			for (int z = minVoxel.z; z <= maxVoxel.z; z++) {
+				int voxelId = x + (y + z * _voxelCount) * _voxelCount;
+				int activeVoxelBufferIndex = _voxelIdToActiveVoxelBuffer[voxelId];
+
+				if (activeVoxelBufferIndex >= 0)
+					InterlockedAdd(_activeVoxelBuffer[activeVoxelBufferIndex].bodyTriangleCount, 1);
+			}
+		}
+	}
+
+	_bodyTriangleBuffer[id.x].pos0 = pos0;
+	_bodyTriangleBuffer[id.x].pos1 = pos1;
+	_bodyTriangleBuffer[id.x].pos2 = pos2;
+	_bodyTriangleBuffer[id.x].normal = TriangleToNormal(pos0, pos1, pos2);
+	_bodyTriangleBuffer[id.x].minVoxel = minVoxel;
+	_bodyTriangleBuffer[id.x].maxVoxel = maxVoxel;
+}
+
+#pragma kernel AnalyzeBodyMeshPass2
+
+[numthreads(THREAD_COUNT,1,1)]
+void AnalyzeBodyMeshPass2 (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= 1) return;
+
+	int index = 0;
+	for (int i = 0; i < _activeVoxelCountBuffer[0]; i ++) {
+		_activeVoxelBuffer[i].index = index;
+		_activeVoxelBuffer[i].endIndex = index;
+		index += _activeVoxelBuffer[i].bodyTriangleCount;
+	}
+
+	_sortedBodyTriangleCountBuffer[0] = index;
+}
+
+
+#pragma kernel SortBodyTriangle
+
+[numthreads(THREAD_COUNT,1,1)]
+void SortBodyTriangle (uint3 id: SV_DispatchThreadID)
+{
+	if (id.x >= _bodyTriangleCount) return;
+
+	int3 minVoxel = _bodyTriangleBuffer[id.x].minVoxel;
+	int3 maxVoxel = _bodyTriangleBuffer[id.x].maxVoxel;
+
+	for (int x = minVoxel.x; x <= maxVoxel.x; x++) {
+		for (int y = minVoxel.y; y <= maxVoxel.y; y++) {
+			for (int z = minVoxel.z; z <= maxVoxel.z; z++) {
+				int voxelId = x + (y + z * _voxelCount) * _voxelCount;
+				int activeVoxelBufferIndex = _voxelIdToActiveVoxelBuffer[voxelId];
+				int endIndex;
+				InterlockedAdd(_activeVoxelBuffer[activeVoxelBufferIndex].endIndex, 1, endIndex);
+				_sortedBodyTriangleBuffer[endIndex] = id.x;
+			}
+		}
+	}
+}
+
+#pragma kernel BodyGarmentCollision
+
+float3 CollideWithTriangle(BodyTriangle tri, int vertexIndex)
+{
+	float3 p = _nextPositionBuffer[vertexIndex].position - tri.pos0;
+	float3 a = tri.pos1 - tri.pos0;
+	float3 b = tri.pos2 - tri.pos0;
+	float3 n = tri.normal;
+
+	float3 n_a = cross(n, a);
+	float3 n_b = cross(n, b);
+
+	float alpha = dot(p, n_b) / dot(a, n_b);
+	float beta =  dot(p, n_a) / dot(b, n_a);
+
+	float distance = dot(p, n);
+	int on = (0 < alpha && alpha < 1) && (0 < beta && beta < 1) && (-_collisionRadius < distance && distance < _collisionRadius);
+
+	return on ? n * (_collisionRadius - distance) : float3(0, 0, 0);
+}
+
+[numthreads(THREAD_COUNT,1,1)]
+void BodyGarmentCollision(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= _vertexCount) return;
+
+	float3 nextPosition = _nextPositionBuffer[id.x].position;
+
+	int voxelId = _nextPositionBuffer[id.x].voxelId;
+	int activeVoxelBufferIndex = _voxelIdToActiveVoxelBuffer[voxelId];
+	Voxel voxel = _activeVoxelBuffer[activeVoxelBufferIndex];
+
+	for (int i = voxel.index; i < voxel.endIndex; i++) {
+		int triangleIndex = _sortedBodyTriangleBuffer[i];
+		BodyTriangle tri = _bodyTriangleBuffer[triangleIndex];
+
+		// only once?
+		float3 diff = CollideWithTriangle(tri, id.x);
+		if (diff.x != 0 || diff.y != 0 || diff.z != 0) {
+			nextPosition += diff;
+			break;
+		}
+	}
+
+	_nextPositionBuffer[id.x].position = nextPosition;
+}
