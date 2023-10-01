@@ -4,12 +4,13 @@ Shader "GarmentSimulator/Garment"
     {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
+        _NormalTex("Normal Map", 2D) = "white" {}
         _Glossiness ("Smoothness", Range(0,1)) = 0.5
         _Metallic ("Metallic", Range(0,1)) = 0.0
     }
     SubShader
     {
-        Tags { "RenderType"="Opaque" }
+        Tags { "RenderType"="Opaque" "Queue"="Transparent" }
         LOD 200
         Cull Off
 
@@ -27,6 +28,7 @@ Shader "GarmentSimulator/Garment"
         #include  "UnityCG.cginc"
 
         sampler2D _MainTex;
+        sampler2D _NormalTex;
 
         struct Input
         {
@@ -62,6 +64,7 @@ Shader "GarmentSimulator/Garment"
             float4 texcoord : TEXCOORD0;
             float4 texcoord1 : TEXCOORD1;
             float4 texcoord2 : TEXCOORD2;
+            float4 tangent: TANGENT;
             UNITY_VERTEX_INPUT_INSTANCE_ID
         };
 
@@ -82,6 +85,7 @@ Shader "GarmentSimulator/Garment"
             o.Metallic = _Metallic;
             o.Smoothness = _Glossiness;
             o.Alpha = c.a;
+            o.Normal = UnpackNormal(tex2D(_NormalTex, IN.uv_MainTex));
         }
         ENDCG
     }

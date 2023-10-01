@@ -145,6 +145,7 @@ public class GSGarment : MonoBehaviour {
         _renderer = gameObject.AddComponent<MeshRenderer>();
         _meshFilter = gameObject.AddComponent<MeshFilter>();
         _meshFilter.sharedMesh = _skin.sharedMesh;
+        _renderer.materials = _skin.materials;
         _skin.enabled = false;
     }
 
