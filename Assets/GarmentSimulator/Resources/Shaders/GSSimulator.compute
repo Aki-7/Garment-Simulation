@@ -190,8 +190,9 @@ void AnalyzeBodyMeshPass1 (uint3 id: SV_DispatchThreadID)
 	float3 pos2 = _skinnedBodyVertexBuffer[index2].position;
 	pos2 = mul(_bodyTransformMatrix, float4(pos2, 1.F)).xyz;
 
-	float3 minPosition = min(pos0, min(pos1, pos2)) - float3(_collisionRadius, _collisionRadius, _collisionRadius);
-	float3 maxPosition = max(pos0, max(pos1, pos2)) + float3(_collisionRadius, _collisionRadius, _collisionRadius);
+	float collisionRadius = max(_collisionFrontRadius, _collisionBackRadius);
+	float3 minPosition = min(pos0, min(pos1, pos2)) - float3(collisionRadius, collisionRadius, collisionRadius);
+	float3 maxPosition = max(pos0, max(pos1, pos2)) + float3(collisionRadius, collisionRadius, collisionRadius);
 
 	int3 minVoxel = PositionToVoxel(minPosition);
 	int3 maxVoxel = PositionToVoxel(maxPosition);
@@ -261,7 +262,7 @@ void SortBodyTriangle (uint3 id: SV_DispatchThreadID)
 
 #pragma kernel BodyGarmentCollision
 
-float3 CollideWithTriangle(BodyTriangle tri, int vertexIndex)
+float3 CollideWithTriangle(BodyTriangle tri, int vertexIndex, out bool hasCollide)
 {
 	float3 p = _nextPositionBuffer[vertexIndex].position - tri.pos0;
 	float3 a = tri.pos1 - tri.pos0;
@@ -275,9 +276,9 @@ float3 CollideWithTriangle(BodyTriangle tri, int vertexIndex)
 	float beta =  dot(p, n_a) / dot(b, n_a);
 
 	float distance = dot(p, n);
-	int on = (0 < alpha && alpha < 1) && (0 < beta && beta < 1) && (-_collisionRadius < distance && distance < _collisionRadius);
+	hasCollide = (0 < alpha && alpha < 1) && (0 < beta && beta < 1) && (-_collisionBackRadius < distance && distance < _collisionFrontRadius);
 
-	return on ? n * (_collisionRadius - distance) : float3(0, 0, 0);
+	return hasCollide ? n * (_collisionFrontRadius - distance) : float3(0, 0, 0);
 }
 
 [numthreads(THREAD_COUNT,1,1)]
@@ -295,9 +296,9 @@ void BodyGarmentCollision(uint3 id : SV_DispatchThreadID)
 		int triangleIndex = _sortedBodyTriangleBuffer[i];
 		BodyTriangle tri = _bodyTriangleBuffer[triangleIndex];
 
-		// only once?
-		float3 diff = CollideWithTriangle(tri, id.x);
-		if (diff.x != 0 || diff.y != 0 || diff.z != 0) {
+		bool hasCollide;
+		float3 diff = CollideWithTriangle(tri, id.x, hasCollide);
+		if (hasCollide) {
 			nextPosition += diff;
 			break;
 		}

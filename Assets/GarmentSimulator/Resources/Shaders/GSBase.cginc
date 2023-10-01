@@ -69,7 +69,8 @@ RWStructuredBuffer<int>					_sortedBodyTriangleCountBuffer;
 
 float		_dt;
 float3		_gravity;
-float		_collisionRadius;
+float		_collisionFrontRadius;
+float		_collisionBackRadius;
 float 		_epsilon;
 float 		_velocityClamp;
 uint		_vertexCount;

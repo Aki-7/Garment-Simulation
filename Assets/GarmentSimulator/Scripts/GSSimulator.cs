@@ -16,16 +16,17 @@ class GSSimulator : MonoBehaviour {
     private ComputeBuffer _activeVoxelCountBuffer;      // int[1]
     private ComputeBuffer _voxelIdToActiveVoxelBuffer;  // int[_voxelCount^3], Stores -1 if it's not active
 
-    private const int   _voxelCount = 32; // per one dimension, up to 1024
+    private const int   _voxelCount = 64; // per one dimension, up to 1024
     private const int   _voxelCount3 = _voxelCount * _voxelCount * _voxelCount;
     private const float _epsilon = 1e-6F;
 
     /* Simulation properties */
     public Vector3 _gravity = new Vector3(0F, -9.81F, 0F);
-    public float _collisionRadius = 0.01F;
+    public float _collisionFrontRadius = 0.01F;
+    public float _collisionBackRadius = 0.02F;
     public float _velocityClamp = 10F;
     public int _subSteps = 3;
-    public int _iterationCount = 20;
+    public int _iterationCount = 25;
 
     void Awake() {
         Debug.Assert(_garment);
@@ -65,7 +66,8 @@ class GSSimulator : MonoBehaviour {
 
     public void UpdateSimulationProperties() {
         _computeShader.SetVector(GSSolver.gravity_ID, GarmentLocalGravity());
-        _computeShader.SetFloat(GSSolver.collisionRadius_ID, GarmentLocalCollisionRadius());
+        _computeShader.SetFloat(GSSolver.collisionFrontRadius_ID, GarmentLocalCollisionFrontRadius());
+        _computeShader.SetFloat(GSSolver.collisionBackRadius_ID, GarmentLocalCollisionBackRadius());
         _computeShader.SetFloat(GSSolver.velocityClamp_ID, GarmentLocalVelocityClamp());
     }
 
@@ -184,9 +186,14 @@ class GSSimulator : MonoBehaviour {
         return _garment.transform.worldToLocalMatrix.MultiplyVector(_gravity);
     }
 
-    private float GarmentLocalCollisionRadius() {
+    private float GarmentLocalCollisionFrontRadius() {
         var scale = _garment.transform.lossyScale;
-        return _collisionRadius / ((scale.x + scale.y + scale.z) / 3);
+        return _collisionFrontRadius / ((scale.x + scale.y + scale.z) / 3);
+    }
+
+    private float GarmentLocalCollisionBackRadius() {
+        var scale = _garment.transform.lossyScale;
+        return _collisionBackRadius / ((scale.x + scale.y + scale.z) / 3);
     }
 
     private float GarmentLocalEpsilon() {

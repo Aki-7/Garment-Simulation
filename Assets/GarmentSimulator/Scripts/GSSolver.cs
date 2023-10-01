@@ -129,7 +129,8 @@ class GSSolver {
 
     public static int dt_ID                     = Shader.PropertyToID("_dt");
     public static int gravity_ID                = Shader.PropertyToID("_gravity");
-    public static int collisionRadius_ID        = Shader.PropertyToID("_collisionRadius");
+    public static int collisionFrontRadius_ID   = Shader.PropertyToID("_collisionFrontRadius");
+    public static int collisionBackRadius_ID    = Shader.PropertyToID("_collisionBackRadius");
     public static int epsilon_ID                = Shader.PropertyToID("_epsilon");
     public static int velocityClamp_ID          = Shader.PropertyToID("_velocityClamp");
     public static int vertexCount_ID            = Shader.PropertyToID("_vertexCount");
