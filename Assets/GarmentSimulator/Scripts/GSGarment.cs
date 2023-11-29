@@ -113,6 +113,9 @@ public class GSGarment : MonoBehaviour {
     public void RequestResetPosition() {
         if (!_ready) return;
         _resetPositionRequestTime = DateTime.Now;
+        for (int i = 0; i < _blendShapeCount; i++) {
+            _skin.SetBlendShapeWeight(i, _blendShapeWeights[i]);
+        }
         _skin.enabled = true;
     }
 

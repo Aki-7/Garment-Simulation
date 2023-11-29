@@ -77,3 +77,6 @@ crashlytics-build.properties
 Assets/*
 !Assets/GarmentSimulator/
 !Assets/GarmentSimulator.meta
+
+*.dll
+*.onnx
