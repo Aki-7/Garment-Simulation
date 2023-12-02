@@ -105,6 +105,7 @@ class GSSolver {
     public static int calculateMinMaxPass1_Kernel;
     public static int calculateMinMaxPass2_Kernel;
     public static int forceSkinnedMesh_Kernel;
+    public static int applySkinningLimit_Kernel;
 
     public static int vertexBuffer_ID                   = Shader.PropertyToID("_vertexBuffer");
     public static int nextPositionBuffer_ID             = Shader.PropertyToID("_nextPositionBuffer");
@@ -142,6 +143,7 @@ class GSSolver {
     public static int bodyTransformMatrix_ID    = Shader.PropertyToID("_bodyTransformMatrix");
     public static int skinnedTransformMatrix_ID = Shader.PropertyToID("_skinnedTransformMatrix");
     public static int skinnedRotationMatrix_ID  = Shader.PropertyToID("_skinnedRotationMatrix");
+    public static int skinningLimitFactor_ID    = Shader.PropertyToID("_skinningLimitFactor");
 
     private const int _threadCount = 256; 
 
@@ -166,6 +168,7 @@ class GSSolver {
         calculateMinMaxPass1_Kernel = garment_CS.FindKernel("CalculateMinMaxPass1");
         calculateMinMaxPass2_Kernel = garment_CS.FindKernel("CalculateMinMaxPass2");
         forceSkinnedMesh_Kernel     = garment_CS.FindKernel("ForceSkinnedMesh");
+        applySkinningLimit_Kernel   = garment_CS.FindKernel("ApplySkinningLimit");
     }
 
     public static void Dispatch1D(ComputeShader shader, int kernel, int count) {

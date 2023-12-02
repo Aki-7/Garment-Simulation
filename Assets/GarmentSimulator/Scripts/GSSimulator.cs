@@ -9,6 +9,9 @@ class GSSimulator : MonoBehaviour {
     public GSGarment _garment;
 
     public GSBody _body;
+
+    [Range(0, 1)]
+    public float _skinningLimitFactor = 0.0001f;
     
     private ComputeShader _computeShader;
 
@@ -28,7 +31,7 @@ class GSSimulator : MonoBehaviour {
     public int _subSteps = 3;
     public int _iterationCount = 25;
 
-    void Awake() {
+    void Start() {
         Debug.Assert(_garment);
         Debug.Assert(_body);
 
@@ -76,6 +79,7 @@ class GSSimulator : MonoBehaviour {
         GSSolver.Dispatch1D(_computeShader, GSSolver.applyExternalForces_Kernel, _garment.vertexCount);
         GSSolver.Dispatch1D(_computeShader, GSSolver.dumpVelocities_Kernel, _garment.vertexCount);
         GSSolver.Dispatch1D(_computeShader, GSSolver.computeNextPositions_Kernel, _garment.vertexCount);
+        _garment.ApplySkinningLimit(_skinningLimitFactor);
 
         for (int i = 0; i < _iterationCount; i++) {
             GSSolver.Dispatch1D(_computeShader, GSSolver.accumulateDistanceConstraint_Kernel, _garment.edgeCount);

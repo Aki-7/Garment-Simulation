@@ -36,6 +36,8 @@ public class GSGarment : MonoBehaviour {
     private ComputeBuffer _deltaUint3Buffer;        // uint3[_vertexCount]
     private ComputeBuffer _minMaxPositionBuffer;    // Vector3[2]
 
+    private GraphicsBuffer _skinnedMeshBuffer;
+
     public ComputeBuffer vertexBuffer           {get { return _vertexBuffer; }}
     public ComputeBuffer restShapeEdgeBuffer    {get { return _restShapeEdgeBuffer; }}
     public ComputeBuffer nextPositionBuffer     {get { return _nextPositionBuffer; }}
@@ -46,11 +48,6 @@ public class GSGarment : MonoBehaviour {
     private int _vertexBuffer_ID = Shader.PropertyToID("_vertexBuffer");
 
     public void Init() {
-        GSSolver.Vertex[] vertices;
-        GSSolver.Edge[] edges;
-        GSSolver.BlendShapeVertex[] blendShapeBase;
-        GSSolver.BlendShapeVertex[] blendShapeDeltas;
-
         SetupRenderer();
 
         Debug.Assert(_meshFilter);
@@ -58,9 +55,9 @@ public class GSGarment : MonoBehaviour {
 
         CleanMesh(_mesh);
 
-        SetupMeshInfo(out vertices, out edges);
+        SetupMeshInfo(out GSSolver.Vertex[] vertices, out GSSolver.Edge[] edges);
 
-        SetupBlendShapes(out blendShapeBase, out blendShapeDeltas);
+        SetupBlendShapes(out GSSolver.BlendShapeVertex[] blendShapeBase, out GSSolver.BlendShapeVertex[] blendShapeDeltas);
 
         SetupBuffers(vertices, edges, blendShapeBase, blendShapeDeltas);
 
@@ -89,10 +86,7 @@ public class GSGarment : MonoBehaviour {
         _deltaCountBuffer.Dispose();
         _deltaUint3Buffer.Dispose();
         _minMaxPositionBuffer.Dispose();
-    }
-
-    void Update() {
-        ResetPositionIfNeeded();
+        _skinnedMeshBuffer?.Dispose();
     }
 
     public void RecalculateMinMax() {
@@ -108,27 +102,32 @@ public class GSGarment : MonoBehaviour {
         _blendShapeWeights[index] = value;
         _blendShapeWeightBuffer.SetData(_blendShapeWeights);
         RecalculateRestShape();
+
+        _skin.SetBlendShapeWeight(index, value);
     }
 
-    public void RequestResetPosition() {
+    public void ResetPosition() {
         if (!_ready) return;
-        _resetPositionRequestTime = DateTime.Now;
-        for (int i = 0; i < _blendShapeCount; i++) {
-            _skin.SetBlendShapeWeight(i, _blendShapeWeights[i]);
-        }
-        _skin.enabled = true;
+
+        if (!SetupSkinnedMeshBufferIfNeeded()) return;
+
+        UpdateSkinnedMeshProperties();
+
+        GSSolver.Dispatch1D(_computeShader, GSSolver.forceSkinnedMesh_Kernel, _vertexCount);
     }
 
-    private void ResetPositionIfNeeded() {
+    public void ApplySkinningLimit(float factor) {
         if (!_ready) return;
-        if (!_skin.enabled) return;
-        if (DateTime.Now - _resetPositionRequestTime < TimeSpan.FromMilliseconds(500)) return;
 
-        var skinnedMesh = _skin.GetVertexBuffer();
-        if (skinnedMesh == null) return;
+        if (!SetupSkinnedMeshBufferIfNeeded()) return;
 
-        _skin.enabled = false;
+        UpdateSkinnedMeshProperties();
 
+        _computeShader.SetFloat(GSSolver.skinningLimitFactor_ID, factor);
+        GSSolver.Dispatch1D(_computeShader, GSSolver.applySkinningLimit_Kernel, _vertexCount);
+    }
+
+    private void UpdateSkinnedMeshProperties() {
         var rootBone = _skin.rootBone.transform;
         var rootBoneTransformMatrix = Matrix4x4.TRS(rootBone.position, rootBone.rotation, Vector3.one);
         var transformMatrix = transform.worldToLocalMatrix * rootBoneTransformMatrix;
@@ -136,10 +135,6 @@ public class GSGarment : MonoBehaviour {
 
         _computeShader.SetMatrix(GSSolver.skinnedTransformMatrix_ID, transformMatrix);
         _computeShader.SetMatrix(GSSolver.skinnedRotationMatrix_ID, rotateMatrix);
-        _computeShader.SetBuffer(GSSolver.forceSkinnedMesh_Kernel, GSSolver.skinnedVertexBuffer_ID, skinnedMesh);
-        GSSolver.Dispatch1D(_computeShader, GSSolver.forceSkinnedMesh_Kernel, _vertexCount);
-
-        skinnedMesh.Dispose();
     }
 
     private void SetupRenderer() {
@@ -150,7 +145,6 @@ public class GSGarment : MonoBehaviour {
         _meshFilter = gameObject.AddComponent<MeshFilter>();
         _meshFilter.sharedMesh = _skin.sharedMesh;
         _renderer.materials = _skin.materials;
-        _skin.enabled = false;
     }
 
     static private void CleanMesh(Mesh mesh) {
@@ -302,6 +296,12 @@ public class GSGarment : MonoBehaviour {
         foreach (var material in _renderer.materials) {
             material.shader = shader;
         }
+
+        var voidShader = Resources.Load("Shaders/GSVoid", typeof(Shader)) as Shader;
+
+        foreach (var material in _skin.materials) {
+            material.shader = voidShader;
+        }
     }
 
     private void SetupComputeShader() {
@@ -320,11 +320,26 @@ public class GSGarment : MonoBehaviour {
         _computeShader.SetBuffer(GSSolver.calculateMinMaxPass2_Kernel, GSSolver.minMaxPositionUint3Buffer_ID, _minMaxPositionBuffer);
         _computeShader.SetBuffer(GSSolver.calculateMinMaxPass2_Kernel, GSSolver.nextPositionBuffer_ID, _nextPositionBuffer);
 
-        _computeShader.SetBuffer(GSSolver.forceSkinnedMesh_Kernel, GSSolver.vertexBuffer_ID, vertexBuffer);
+        _computeShader.SetBuffer(GSSolver.forceSkinnedMesh_Kernel, GSSolver.vertexBuffer_ID, _vertexBuffer);
+
+        _computeShader.SetBuffer(GSSolver.applySkinningLimit_Kernel, GSSolver.nextPositionBuffer_ID, _nextPositionBuffer);
 
         _computeShader.SetInt(GSSolver.vertexCount_ID, _vertexCount);
         _computeShader.SetInt(GSSolver.edgeCount_ID, _edgeCount);
         _computeShader.SetInt(GSSolver.blendShapeCount_ID, _blendShapeCount);
+    }
+
+    private bool SetupSkinnedMeshBufferIfNeeded() {
+        if (_skinnedMeshBuffer != null) return true;
+        _skinnedMeshBuffer = _skin.GetVertexBuffer();
+
+        if (_skinnedMeshBuffer == null) return false;
+
+        _computeShader.SetBuffer(GSSolver.forceSkinnedMesh_Kernel, GSSolver.skinnedVertexBuffer_ID, _skinnedMeshBuffer);
+
+        _computeShader.SetBuffer(GSSolver.applySkinningLimit_Kernel, GSSolver.skinnedVertexBuffer_ID, _skinnedMeshBuffer);
+
+        return true;
     }
 
     private void RecalculateRestShape() {

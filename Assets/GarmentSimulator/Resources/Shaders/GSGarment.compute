@@ -118,3 +118,15 @@ void ForceSkinnedMesh (uint3 id: SV_DispatchThreadID)
 	_vertexBuffer[id.x].tangent  = mul(_skinnedRotationMatrix,  float4(_skinnedVertexBuffer[id.x].tangent.xyz, 1)).xyz;
 	_vertexBuffer[id.x].velocity = float3(0, 0, 0);
 }
+
+#pragma kernel ApplySkinningLimit
+
+[numthreads(THREAD_COUNT,1,1)]
+void ApplySkinningLimit (uint3 id: SV_DispatchThreadID)
+{
+ 	if (id.x >= _vertexCount) return;
+
+	float3 skinnedPosition = mul(_skinnedTransformMatrix, float4(_skinnedVertexBuffer[id.x].position,    1)).xyz;
+
+	_nextPositionBuffer[id.x].position = lerp(_nextPositionBuffer[id.x].position, skinnedPosition, _skinningLimitFactor);
+}

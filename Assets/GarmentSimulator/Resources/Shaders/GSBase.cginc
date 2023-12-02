@@ -82,6 +82,7 @@ uint		_bodyTriangleCount;
 float4x4 	_bodyTransformMatrix;
 float4x4 	_skinnedTransformMatrix;
 float4x4 	_skinnedRotationMatrix;
+float		_skinningLimitFactor;
 
 #define FLT_MAX 3.402823466e+38F
 #define COMPRESSION_STIFFNESS 1.0

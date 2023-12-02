@@ -12,7 +12,7 @@ public class GSGarmentEditor : Editor
         serializedObject.Update();
 
         if (GUILayout.Button("Reset Garment")) {
-            garment.RequestResetPosition();
+            garment.ResetPosition();
         }
 
         EditorGUILayout.LabelField("Blend Shapes", EditorStyles.boldLabel);
